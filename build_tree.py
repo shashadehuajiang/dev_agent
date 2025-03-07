@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import uuid
 import os
+import re
+import string
 import json
 from datetime import datetime
 from typing import Optional, List, Dict
@@ -126,7 +128,7 @@ class CodeGenerator:
             """请判断是否需要拆分该需求。若不需要，请返回：
             {{"leaf": true, "class": {{"name": "类名", "functions": [{{"name":"方法名", "input":"参数", "output":"类型"}}]}}}}
             若需要拆分，请返回：
-            {{"subtasks": [{{"description": "子任务描述", "class": {{"name": "类名", "functions": [...]}}}}], "leaf": false}}
+            {{"subtasks": [{{"description": "子任务描述", "class": {{"name": "类名", "functions": [写清楚初始化方法、输入、输出个数、类型]}}}}], "leaf": false}}
             需求内容：{requirement}"""
         )
         messages = prompt_template.format_messages(requirement=requirement)
@@ -289,22 +291,84 @@ class CodeGenerator:
         clean_code = self._clean_generated_code(raw_code)
         self._save_code(node, clean_code)
 
+    def _generate_base_name(self, node: TaskNode) -> str:
+        """生成简洁且有意义的基名"""
+        # 优先使用类名中的核心词汇
+        if node.class_info and node.class_info.name:
+            class_name = node.class_info.name
+            # 提取驼峰命名中的核心词汇（最多取3个）
+            words = re.findall('[A-Z][a-z]+', class_name)
+            if len(words) > 3:
+                return f"{'_'.join(words[:2])}_{words[-1]}".lower()
+            return '_'.join(words).lower()
+
+        # 父节点使用关键动词+名词
+        keywords = {
+            'process': ['处理', '执行', '进行'],
+            'manage': ['管理', '协调'],
+            'integrate': ['整合', '组合']
+        }
+        
+        # 提取描述中的核心词汇
+        desc = node.description
+        core_verbs = [k for k, v in keywords.items() if any(w in desc for w in v)]
+        core_nouns = re.findall(r'\b(?:文件|数据|单词|统计|结果)\b', desc)
+        
+        # 生成组合名称（动词_名词1_名词2）
+        name_parts = []
+        if core_verbs:
+            name_parts.append(core_verbs[0])
+        name_parts += core_nouns[:2]
+        
+        # 保底策略
+        if not name_parts:
+            name_parts = ['system']
+            
+        return '_'.join(name_parts)
+
+    def _get_unique_filename(self, base_name: str) -> str:
+        """生成唯一文件名（最大长度25字符）"""
+        base_name = base_name[:20]  # 保留扩展名空间
+        ext = '.py'
+        
+        # 过滤非法字符
+        valid_chars = f'-_.() {string.ascii_letters}{string.digits}'
+        base_name = ''.join(c for c in base_name if c in valid_chars)
+        
+        counter = 1
+        while True:
+            suffix = f'_{counter}' if counter > 1 else ''
+            filename = f"{base_name}{suffix}{ext}"
+            full_path = os.path.join("generated", filename)
+            
+            if not os.path.exists(full_path) and len(filename) <= 25:
+                return filename
+            counter += 1
 
     def _save_code(self, node: TaskNode, code: str):
         """保存代码到文件"""
-        self._print_process(f"保存代码到文件：{node.id.replace('-', '_')}.py")
-        os.makedirs("generated", exist_ok=True)
-        filename = f"generated/{node.id.replace('-', '_')}.py"
-        with open(filename, 'w') as f:
+        base_name = self._generate_base_name(node)
+        
+        # 添加层级标记（根节点加main，中间节点加int）
+        if node.parent_id is None:
+            base_name += '_main'
+        elif not node.is_leaf:
+            base_name += '_int'
+            
+        filename = self._get_unique_filename(base_name)
+        filepath = os.path.join("generated", filename)
+        
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'w', encoding='utf-8') as f:
             f.write(code)
-        node.code_path = filename
-        print(f"Generated code saved to: {filename}")
+        node.code_path = filepath
+        print(f"Saved: {filename} ({len(filename)} chars)")
 
 # 使用示例
 if __name__ == "__main__":
     generator = CodeGenerator()
     task_tree = generator.build_tree(
-        "编写一个Python程序，读取文本文件，统计单词出现次数，并保存结果。"
+        "编写一个Python程序，读取文本文件，统计单词出现次数，并保存结果。分两个子任务"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 
