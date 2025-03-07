@@ -197,7 +197,6 @@ class UnifiedCodeGenerator:
         self._log_api_call(messages, response.content)
         
         clean_code = self._clean_code(response.content)
-        #clean_code = self._add_submodule_calls(node, clean_code)
         self._save_code(node, clean_code)
         
         # 生成详细API文档
@@ -254,33 +253,6 @@ class UnifiedCodeGenerator:
             )
         except Exception as e:
             self._print_process(f"生成API文档失败: {str(e)}")
-
-    def _add_submodule_calls(self, node: TaskNode, code: str) -> str:
-        if not node.children:
-            return code
-
-        import_statements = []
-        call_statements = []
-        
-        for child in node.children:
-            if child.code_path and child.class_info:
-                module_path = os.path.splitext(child.code_path)[0].replace(os.path.sep, '.')
-                class_name = child.class_info.name
-                import_statements.append(f"from {module_path} import {class_name}")
-                for func in child.class_info.functions:
-                    if func.name.lower() in ['run', 'execute', 'main']:
-                        call_statements.append(
-                            f"{class_name}().{func.name}()  # 调用子模块方法"
-                        )
-
-        insert_point = code.find("\n\nif __name__ == '__main__':")
-        if insert_point == -1:
-            code += '\n\n' + '\n'.join(import_statements + call_statements)
-        else:
-            code = code[:insert_point] + '\n' + '\n'.join(call_statements) + code[insert_point:]
-            code = '\n'.join(import_statements) + '\n\n' + code
-
-        return code
 
     def _clean_code(self, raw_code: str) -> str:
         code_blocks = re.findall(r'```(?:python\s*)?\n(.*?)\n\s*```', raw_code, re.DOTALL)
