@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import uuid
 import os
 import json
@@ -164,23 +165,30 @@ class CodeGenerator:
     def _clean_generated_code(self, raw_response: str) -> str:
         """清洗生成的代码，提取有效部分"""
         import re
-        # 匹配三种可能的代码块格式
+        # 改进正则表达式以更灵活匹配代码块
         code_pattern = re.compile(
-            r'```(?:python)?\n(.*?)\n```|# START CODE(.*?)# END CODE',
+            r'```(?:python\s*)?\n(.*?)\n\s*```|# START CODE\s*(.*?)\s*# END CODE',
             re.DOTALL
         )
         matches = code_pattern.search(raw_response)
+        
         if matches:
             # 提取第一个非空分组
-            code = matches.group(1) or matches.group(2)
-            return code.strip()
+            code = None
+            for group in matches.groups():
+                if group is not None:
+                    code = group.strip()
+                    break
+            if code:
+                return code
         
-        # 如果没有匹配到代码块，尝试提取有效代码行
+        # 如果未匹配到代码块，提取含有关键字的代码行
         code_lines = []
         in_code = False
         for line in raw_response.split('\n'):
-            if any(line.lstrip().startswith(keyword) 
-                   for keyword in ['import ', 'from ', 'class ', 'def ']):
+            stripped_line = line.strip()
+            if any(stripped_line.startswith(keyword) 
+                for keyword in ['import', 'from', 'class', 'def', '@']):
                 in_code = True
             if in_code:
                 code_lines.append(line)
@@ -197,7 +205,16 @@ class CodeGenerator:
             类名：{class_name}
             方法列表：
             {methods}
-            要求：符合PEP8规范，仅输出完整代码，别废话"""
+
+            要求：
+            1. 包含完整的类实现
+            2. 在代码最后添加if __name__ == "__main__":块
+            3. 在main块中编写测试用例，包含以下内容：
+               - 创建类的实例
+               - 调用主要方法
+               - 使用断言验证结果
+               - 打印测试通过信息
+            4. 符合PEP8规范，仅输出代码，不要解释，英文注释"""
         )
         
         methods = []
@@ -219,41 +236,58 @@ class CodeGenerator:
         self._save_code(node, clean_code)
 
     def _generate_parent_code(self, node: TaskNode):
-        """生成父节点整合代码"""
+        """生成父节点整合代码（添加集成测试）"""
         self._print_process(f"整合 {len(node.children)} 个子节点代码")
 
         imports = []
-        functions = []
+        test_cases = []
         
         for child in node.children:
             if child.code_path:
                 module_name = os.path.splitext(os.path.basename(child.code_path))[0]
                 imports.append(f"from {module_name} import {child.class_info.name}")
-                for func in child.class_info.functions:
-                    functions.append(f"{child.class_info.name}.{func.name}()")
-        
+                # 生成测试用例
+                test_cases.append(f"""
+    # 测试{child.class_info.name}功能
+    try:
+        obj_{child.class_info.name} = {child.class_info.name}()
+        # 添加实际测试逻辑...
+        print(f"{child.class_info.name} 测试通过")
+    except Exception as e:
+        print(f"{child.class_info.name} 测试失败: {{str(e)}}")
+                """)
+
         prompt_template = ChatPromptTemplate.from_template(
             """请编写整合代码实现以下功能：
             需求描述：{description}
+
             需要整合的操作：
             {imports}
-            需要调用的方法：
-            {functions}
-            输出完整的可执行Python代码，符合PEP8规范，仅输出完整代码，别废话"""
+
+            要求：
+            1. 实现完整的业务流程
+            2. 添加if __name__ == "__main__":块
+            3. 在main块中包含：
+               - 所有子模块的功能测试
+               - 完整的集成测试流程
+               - 使用断言验证最终结果
+               - 打印详细的测试报告
+            4. 符合PEP8规范，仅输出代码，英文注释"""
         )
         
         messages = prompt_template.format_messages(
             description=node.description,
-            imports='\n'.join(imports),
-            functions='\n'.join(functions)
+            imports='\n'.join(imports)
         )
         
-        # 调用API并记录日志
         response = llm.invoke(messages)
         code = response.content
         self._log_api_call(messages, code)
         
-        self._save_code(node, code)
+        # 添加动态生成的测试用例
+        raw_code = code.replace("# 添加测试用例在这里", "\n".join(test_cases))
+        clean_code = self._clean_generated_code(raw_code)
+        self._save_code(node, clean_code)
 
 
     def _save_code(self, node: TaskNode, code: str):
@@ -270,7 +304,7 @@ class CodeGenerator:
 if __name__ == "__main__":
     generator = CodeGenerator()
     task_tree = generator.build_tree(
-        "编写一个Python程序，读取文本文件，统计单词出现次数，并保存结果"
+        "编写一个Python程序，读取文本文件，统计单词出现次数，并保存结果。"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 

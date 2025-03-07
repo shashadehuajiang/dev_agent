@@ -1,4 +1,5 @@
-
+log/
+generated/
 test/
 config.py
 test.py
