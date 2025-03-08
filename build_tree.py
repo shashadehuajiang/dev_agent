@@ -289,7 +289,7 @@ class UnifiedCodeGenerator:
                 """根据以下需求生成Python代码：
                 要求：
                 1. 包含完整的类实现和__main__测试块，print输入输出，使用assert断言
-                2. 代码干净、简单、无注释
+                2. 代码干净、无注释
                 3. 优先使用单线程
                 4. 如果使用多线程，必须包含多线程错误捕获并异常退出
                 5. 必须使用子模块的API，严格按照API文档要求
@@ -298,7 +298,7 @@ class UnifiedCodeGenerator:
                 参考信息：
                 {context}
 
-                生成完整代码，仅返回代码，不要省略："""
+                生成完整的代码，仅返回代码，不省略："""
             )
 
     def _build_code_context(self, node: TaskNode) -> str:
@@ -453,7 +453,7 @@ if __name__ == "__main__":
     # 示例用法
     generator = UnifiedCodeGenerator(max_depth=2)
     task_tree = generator.build_tree(
-        "一个任务随机生成n个0到9的整数，另一个任务统计所有数字中0的个数。必须分两个子任务"
+        "生成一个GUI的flappy bird游戏"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 
