@@ -112,7 +112,7 @@ class UnifiedCodeGenerator:
 
     def _analyze_requirement(self, requirement: str) -> Dict:
         prompt_template = ChatPromptTemplate.from_template(
-            """分析需求并返回：如果100行代码内可直接实现则返回类信息，否则拆分子任务
+            """分析代码实现需求并返回：如果100行代码内可直接实现则返回类信息，否则拆分子任务。子任务必须是写代码任务。
             返回格式（JSON）：
             {{
                 "type": "direct|split",
