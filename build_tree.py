@@ -4,6 +4,7 @@ import os
 import re
 import string
 import json
+import subprocess
 from datetime import datetime
 from typing import Optional, List, Dict
 from pydantic import BaseModel, Field
@@ -52,6 +53,7 @@ class UnifiedCodeGenerator:
         self.node_map = {}
         self.indent_level = 0
         self.generated_files = set()
+        self.max_retries = 5  # 最大重试次数
 
     def _print_process(self, message: str):
         indent = "  " * self.indent_level
@@ -110,7 +112,7 @@ class UnifiedCodeGenerator:
 
     def _analyze_requirement(self, requirement: str) -> Dict:
         prompt_template = ChatPromptTemplate.from_template(
-            """分析需求并返回：如果可直接实现则返回类信息，否则拆分子任务
+            """分析需求并返回：如果100行代码内可直接实现则返回类信息，否则拆分子任务
             返回格式（JSON）：
             {{
                 "type": "direct|split",
@@ -161,24 +163,88 @@ class UnifiedCodeGenerator:
         )
 
     def _generate_code(self, node: TaskNode):
+        """改进后的代码生成方法"""
         if node.code_path and os.path.exists(node.code_path):
             return
 
-        prompt_template = ChatPromptTemplate.from_template(
-            """根据以下需求生成Python代码：
-            要求：
-            1. 包含完整的类实现和__main__测试块
-            2. 代码精炼，不加注释
-            3. 必须用子模块的API。
-            4. PEP 8 规范
-            5. import 语句必须在文件开头
+        retry_count = 0
+        previous_error = None
+        current_code = None
 
-            参考信息：
-            {context}
+        while retry_count < self.max_retries:
+            # 生成代码提示模板
+            prompt_template = self._get_code_prompt(has_error=previous_error is not None)
+            context = self._build_code_context(node)
+            
+            # 构建消息内容
+            messages = prompt_template.format_messages(
+                context=context,
+                error=previous_error,
+                code=current_code
+            ) if previous_error else prompt_template.format_messages(context=context)
 
-            生成代码："""
-        )
+            # 调用模型生成代码
+            response = llm.invoke(messages)
+            self._log_api_call(messages, response.content)
+            clean_code = self._clean_code(response.content)
+            current_code = clean_code  # 保存当前生成的代码
 
+            # 保存并测试代码
+            self._save_code(node, clean_code)
+            success, error = self._test_code(node.code_path)
+
+            if success:
+                self._print_process("代码运行测试通过")
+                break
+            else:
+                retry_count += 1
+                previous_error = error
+                self._print_process(f"代码测试失败（尝试 {retry_count}/{self.max_retries}）")
+                self._print_process(f"错误信息: {error}")
+        else:
+            self._print_process("⚠️ 达到最大重试次数，代码仍无法运行")
+
+    def _get_code_prompt(self, has_error: bool) -> ChatPromptTemplate:
+        """获取代码生成提示模板"""
+        if has_error:
+            return ChatPromptTemplate.from_template(
+                """请修复以下代码错误，保持原始需求：
+                [问题代码]:
+                {code}
+
+                [错误信息]:
+                {error}
+
+                原始需求:
+                {context}
+
+                修改要求:
+                1. 检查测试assert内容是否正确
+                2. 保持所有原始功能需求
+                3. 确保符合PEP8规范
+                4. 修复明显的语法错误和运行时错误
+                5. 测试时不存在的文件需要先生成
+
+                请生成修正后的完整代码:"""
+            )
+        else:
+            return ChatPromptTemplate.from_template(
+                """根据以下需求生成Python代码：
+                要求：
+                1. 包含完整的类实现和__main__测试块
+                2. 测试必须简单，且包含断言
+                3. 优先使用子模块的API，严格按照API文档要求
+                4. PEP 8 规范
+                5. 无注释
+
+                参考信息：
+                {context}
+
+                生成代码："""
+            )
+
+    def _build_code_context(self, node: TaskNode) -> str:
+        """构建代码生成上下文信息"""
         context = []
         if node.class_info and node.class_info.functions:
             context.append(f"# 主类: {node.class_info.name}")
@@ -192,38 +258,28 @@ class UnifiedCodeGenerator:
             parent_path_info = self._get_node_path_info(node)
             for child in node.children:
                 child_path_info = self._get_node_path_info(child)
-                if parent_path_info['path_parts']:
-                    relative_parts = child_path_info['path_parts'][len(parent_path_info['path_parts']):]
-                else:
-                    relative_parts = child_path_info['path_parts']
-                relative_path = os.path.join(*relative_parts, child_path_info['filename']) if relative_parts else child_path_info['filename']
-                context.append("\n")
-                context.append(f"- 文件名: {relative_path}")
-                context.append(f"- API文档: {child.api_doc}")
-
-        messages = prompt_template.format_messages(context='\n'.join(context))
-        response = llm.invoke(messages)
-        self._log_api_call(messages, response.content)
-        
-        clean_code = self._clean_code(response.content)
-        self._save_code(node, clean_code)
-        
-        self._refine_api_documentation(node, clean_code)
+                relative_parts = child_path_info['path_parts'][len(parent_path_info['path_parts']):]
+                relative_path = os.path.join(*relative_parts, child_path_info['filename'])
+                context.extend([
+                    f"\n- 文件名: {relative_path}",
+                    f"- API文档: {child.api_doc}"
+                ])
+        return '\n'.join(context)
 
     def _refine_api_documentation(self, node: TaskNode, code: str):
         prompt_template = ChatPromptTemplate.from_template(
             """根据代码生成详细的API文档，包含：
             1. 类功能描述和初始化参数
             2. 每个方法的参数说明、返回值、使用示例
-            3. 模块的整体使用示例
-            4. 子模块的调用说明（如果有）
+            3. 模块的整体使用示例代码
+            4. 精炼
             
             返回JSON格式：
             {{
                 "class_doc": "类详细说明",
                 "methods": [
                     {{
-                        "name": "方法名",
+                        "name": "方法名（包括初始化方法）",
                         "doc": "方法详细说明及示例"
                     }}
                 ],
@@ -293,12 +349,10 @@ class UnifiedCodeGenerator:
         file_name = f"{path_parts[-1]}.py" if path_parts else "main.py"
         filepath = os.path.join(full_path, file_name)
         
-        if filepath in self.generated_files:
-            return
-        
         os.makedirs(full_path, exist_ok=True)
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(code)
+
         node.code_path = filepath
         self.generated_files.add(filepath)
         self._print_process(f"生成文件：{filepath}")
@@ -332,11 +386,30 @@ class UnifiedCodeGenerator:
             "filename": filename,
             "filepath": filepath
         }
+    
+    def _test_code(self, filepath: str) -> (bool, str):
+        """执行代码并返回测试结果"""
+        try:
+            result = subprocess.run(
+                ['python', filepath],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                return True, result.stdout
+            else:
+                error = result.stderr.strip() or result.stdout.strip()
+                return False, error or "Unknown error"
+        except subprocess.TimeoutExpired as e:
+            return False, f"Timeout after 10 seconds: {e.stderr}"
+        except Exception as e:
+            return False, str(e)
 
 if __name__ == "__main__":
     generator = UnifiedCodeGenerator()
     task_tree = generator.build_tree(
-        "写一个统计字符串中1的个数的函数。写代码时候有一半概率写一个bug进去，不分子问题。"
+        "随机生成1000位数字，要求数字中不包含1和3，保存为txt，随后读取txt，统计其中0的个数。必须分为两个子问题"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 
