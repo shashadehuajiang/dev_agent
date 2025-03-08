@@ -3,7 +3,11 @@
 ## 简介
 `UnifiedCodeGenerator` 是一个用于根据需求自动生成 Python 代码的工具。它能够将复杂的需求拆分成子任务，生成相应的代码，并对代码进行测试和优化。
 
+
+
 ## 安装依赖库
+python 版本3.12
+
 在运行代码之前，你需要安装所需的依赖库。可以使用以下命令通过 `pip` 进行安装：
 ```bash
 pip install langchain-openai langchain-core pydantic
