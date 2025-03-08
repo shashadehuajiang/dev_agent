@@ -1,8 +1,7 @@
 # UnifiedCodeGenerator 代码生成器使用说明
 
 ## 简介
-`UnifiedCodeGenerator` 是一个用于根据需求自动生成 Python 代码的工具。它能够将复杂的需求拆分成子任务，生成相应的代码，并对代码进行测试和优化。
-
+`UnifiedCodeGenerator` 是一个用于根据需求自动生成 Python 代码的工具。它能够将复杂的需求拆分成子任务，生成相应的代码。
 
 
 ## 安装依赖库
@@ -21,6 +20,8 @@ ARK_API_KEY = "your_api_key"
 API_MODEL_NAME = "your_model_name"
 ```
 请将 `your_api_url`、`your_api_key` 和 `your_model_name` 替换为你实际使用的 API 地址、API 密钥和模型名称。
+
+[火山引擎API获取方式（支持deepseek系列）](https://zhuanlan.zhihu.com/p/23798747150)
 
 ## 运行代码
 完成依赖库的安装和配置文件的设置后，你可以运行代码。在终端中，进入代码所在的目录，然后执行以下命令：
