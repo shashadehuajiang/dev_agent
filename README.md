@@ -3,7 +3,6 @@
 ## 简介
 `UnifiedCodeGenerator` 是一个用于根据需求自动生成 Python 代码的工具。它能够将复杂的需求拆分成子任务，生成相应的代码。
 
-
 ## 安装依赖库
 python 版本3.12
 
@@ -18,6 +17,11 @@ pip install langchain-openai langchain-core pydantic
 API_URL = "your_api_url"
 ARK_API_KEY = "your_api_key"
 API_MODEL_NAME = "your_model_name"
+
+例子：
+API_URL = "https://ark.cn-beijing.volces.com/api/v3"
+ARK_API_KEY = "1111111-1111-1111-1111-1111111111"
+API_MODEL_NAME ="deepseek-r1-250120"
 ```
 请将 `your_api_url`、`your_api_key` 和 `your_model_name` 替换为你实际使用的 API 地址、API 密钥和模型名称。
 
@@ -46,3 +50,5 @@ if __name__ == "__main__":
 - 请确保你的 API 密钥和模型名称是有效的，否则代码可能无法正常调用 API 进行代码生成。
 - 代码生成过程中可能会涉及到多次重试，以确保生成的代码能够通过测试。如果达到最大重试次数仍无法生成可运行的代码，会输出相应的错误信息。
 - 生成的代码会保存在 `generated` 目录下，你可以查看生成的文件和 `__init__.py` 文件。
+
+
