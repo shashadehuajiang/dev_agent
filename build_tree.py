@@ -120,6 +120,8 @@ class UnifiedCodeGenerator:
     def _analyze_requirement(self, requirement: str) -> Dict:
         prompt_template = ChatPromptTemplate.from_template(
             """分析代码实现需求并返回：如果100行代码内可直接实现则返回类信息，否则拆分子任务。子任务必须是写代码任务。
+            子任务的描述必须完备，是完整详细的描述。
+            所有子任务必须是独立的，不能互相依赖。所有子任务组合能够完成整个需求。
             返回格式（JSON）：
             {{
                 "type": "direct|split",
@@ -232,22 +234,26 @@ class UnifiedCodeGenerator:
                 4. 修复明显的语法错误和运行时错误
                 5. 测试时不存在的文件需要先生成
 
-                请生成修正后的完整代码:"""
+                请生成修正后的完整代码，不要省略:"""
             )
         else:
             return ChatPromptTemplate.from_template(
                 """根据以下需求生成Python代码：
                 要求：
                 1. 包含完整的类实现和__main__测试块
-                2. 测试必须简单，且包含断言
-                3. 优先使用子模块的API，严格按照API文档要求
-                4. PEP 8 规范
-                5. 无注释
+                2. 测试必须简单
+                3. 如果多线程，必须包含多线程错误捕获：
+                - 使用sys.exit(1)报告错误
+                - 主线程要检查子线程异常
+                - 使用threading.excepthook捕获线程异常
+                4. 优先使用子模块的API，严格按照API文档要求
+                5. PEP 8 规范
+                6. 代码无注释
 
                 参考信息：
                 {context}
 
-                生成代码："""
+                生成完整代码，不要省略："""
             )
 
     def _build_code_context(self, node: TaskNode) -> str:
@@ -401,7 +407,7 @@ class UnifiedCodeGenerator:
                 ['python', filepath],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=120
             )
             if result.returncode == 0:
                 return True, result.stdout
@@ -409,7 +415,7 @@ class UnifiedCodeGenerator:
                 error = result.stderr.strip() or result.stdout.strip()
                 return False, error or "Unknown error"
         except subprocess.TimeoutExpired as e:
-            return False, f"Timeout after 10 seconds: {e.stderr}"
+            return False, f"Timeout after 120 seconds: {e.stderr}"
         except Exception as e:
             return False, str(e)
 
@@ -418,8 +424,9 @@ if __name__ == "__main__":
     # 设置最大深度为2层
     generator = UnifiedCodeGenerator(max_depth=2)
     task_tree = generator.build_tree(
-        "随机生成1000位数字，要求数字中不包含1和3，保存为txt，随后读取txt，统计其中0的个数。必须分为两个子问题"
+        "写个多线程程序，每个线程随机生成10000个数字，统计其中0的个数，统计其中0的个数。"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 
+    
     
