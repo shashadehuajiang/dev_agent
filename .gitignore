@@ -1,5 +1,6 @@
 log/
 generated/
 test/
+__pycache__/
 config.py
 test.py
