@@ -48,12 +48,13 @@ TaskNode.model_rebuild()
 
 class UnifiedCodeGenerator:
     """统一的代码生成器"""
-    def __init__(self):
+    def __init__(self, max_depth: int = 3):  # 添加最大深度参数，默认3层
         self.root = None
         self.node_map = {}
         self.indent_level = 0
         self.generated_files = set()
-        self.max_retries = 5  # 最大重试次数
+        self.max_retries = 5
+        self.max_depth = max_depth  # 新增深度限制
 
     def _print_process(self, message: str):
         indent = "  " * self.indent_level
@@ -77,16 +78,22 @@ class UnifiedCodeGenerator:
         self._print_process(f"构建任务树：'{requirement}'")
         self.root = TaskNode(description=requirement)
         self.node_map[self.root.id] = self.root
-        self._process_node(self.root)
+        self._process_node(self.root, current_depth=0)  # 添加当前深度参数
         return self.root
 
-    def _process_node(self, node: TaskNode):
+    def _process_node(self, node: TaskNode, current_depth: int):  # 新增current_depth参数
         if node.status == "completed":
+            return
+
+        # 深度限制检查
+        if current_depth >= self.max_depth:
+            self._print_process(f"⚠️ 达到最大深度限制 {self.max_depth}，停止分解")
+            node.status = "completed"
             return
 
         node.status = "processing"
         self.indent_level += 1
-        self._print_process(f"处理节点 [{node.id[:8]}]：{node.description}")
+        self._print_process(f"处理节点 [{node.id[:8]}]（深度 {current_depth}）：{node.description}")
         
         response = self._analyze_requirement(node.description)
         
@@ -104,7 +111,7 @@ class UnifiedCodeGenerator:
                     child.api_doc = subtask['class'].get('api_doc')
                 node.children.append(child)
                 self.node_map[child.id] = child
-                self._process_node(child)
+                self._process_node(child, current_depth + 1)  # 递归时深度+1
 
         self._generate_code(node)
         node.status = "completed"
@@ -406,8 +413,10 @@ class UnifiedCodeGenerator:
         except Exception as e:
             return False, str(e)
 
+
 if __name__ == "__main__":
-    generator = UnifiedCodeGenerator()
+    # 设置最大深度为2层
+    generator = UnifiedCodeGenerator(max_depth=2)
     task_tree = generator.build_tree(
         "随机生成1000位数字，要求数字中不包含1和3，保存为txt，随后读取txt，统计其中0的个数。必须分为两个子问题"
     )
