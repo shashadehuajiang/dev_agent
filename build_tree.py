@@ -162,10 +162,10 @@ class UnifiedCodeGenerator:
     def _analyze_requirement(self, requirement: str) -> Dict:
         """分析用户需求生成实现方案"""
         prompt_template = ChatPromptTemplate.from_template(
-            """分析代码实现需求并返回：如果代码可直接一个文件实现，则返回类信息，否则需拆分子任务。
+            """分析代码实现需求并返回：如果代码简单，可直接一个文件实现，则返回类信息，否则需拆分子任务进行解耦。
             子任务必须是python代码任务。
+            下面“本任务描述：”之后出现过的所有句子、代码必须包含在其中某一个子任务描述中，不得拆分后遗漏信息。
             子任务的描述必须完备，是完整详细的描述。
-            所有子任务必须是独立的，不能互相依赖。
             必须严格定义所有函数的输入输出，包括初始化函数。
             返回格式（JSON）：
             {{
@@ -189,7 +189,7 @@ class UnifiedCodeGenerator:
                     }}
                 ]
             }}
-            需求内容：{requirement}"""
+            本任务描述：{requirement}"""
         )
         messages = prompt_template.format_messages(requirement=requirement)
         response = llm.invoke(messages)
@@ -288,11 +288,12 @@ class UnifiedCodeGenerator:
             return ChatPromptTemplate.from_template(
                 """根据以下需求生成Python代码：
                 要求：
-                1. 包含完整的类实现和__main__测试块
-                2. 代码尽可能简单、无注释
+                1. 包含完整的类实现和__main__测试块，print输入输出，使用assert断言
+                2. 代码干净、简单、无注释
                 3. 优先使用单线程
                 4. 如果使用多线程，必须包含多线程错误捕获并异常退出
                 5. 必须使用子模块的API，严格按照API文档要求
+                6. 第一行写utf-8编码
 
                 参考信息：
                 {context}
@@ -452,7 +453,7 @@ if __name__ == "__main__":
     # 示例用法
     generator = UnifiedCodeGenerator(max_depth=2)
     task_tree = generator.build_tree(
-        "一个任务随机生成n个数字，另一个任务统计所有数字中0的个数。必须分两个子任务"
+        "一个任务随机生成n个0到9的整数，另一个任务统计所有数字中0的个数。必须分两个子任务"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 
