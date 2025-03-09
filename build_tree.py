@@ -298,7 +298,7 @@ class UnifiedCodeGenerator:
                 参考信息：
                 {context}
 
-                生成完整的代码，仅返回代码，不省略："""
+                仅返回一个完整代码块，不省略："""
             )
 
     def _build_code_context(self, node: TaskNode) -> str:
@@ -453,7 +453,7 @@ if __name__ == "__main__":
     # 示例用法
     generator = UnifiedCodeGenerator(max_depth=2)
     task_tree = generator.build_tree(
-        "生成一个命令行的贪吃蛇游戏"
+        "设计并实现一个DNS隐蔽信道"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 
