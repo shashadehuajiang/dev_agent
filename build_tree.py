@@ -453,7 +453,7 @@ if __name__ == "__main__":
     # 示例用法
     generator = UnifiedCodeGenerator(max_depth=2)
     task_tree = generator.build_tree(
-        "生成一个GUI的flappy bird游戏"
+        "生成一个命令行的贪吃蛇游戏"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 
