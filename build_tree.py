@@ -18,7 +18,8 @@ from openmanus.mylib import run_agent
 llm = ChatOpenAI(
     openai_api_base=API_URL,
     openai_api_key=ARK_API_KEY,
-    model_name=API_MODEL_NAME
+    model_name=API_MODEL_NAME,
+    temperature=0.0
 )
 parser = JsonOutputParser()
 
@@ -159,8 +160,8 @@ class UnifiedFileGenerator:
         parent_path = self._get_node_path(node.parent_id) if node.parent_id else ""
         
         prompt_template = ChatPromptTemplate.from_template(
-            """作为全栈开发专家，分析需求并规划文件结构。遵循以下原则：
-1. 单个节点最多生成5个核心文件
+            """作为全栈开发专家，仔细分析需求，并规划文件结构。如果需求在100行代码以下或难度低，不需要拆分subtasks，否则需拆分。遵循以下原则：
+1. 单个节点最多生成3个核心文件
 2. 父节点负责框架，子节点处理具体模块
 3. 资源文件集中放在resources目录
 4. 确保文件路径符合当前节点位置：{current_path}
@@ -227,7 +228,7 @@ class UnifiedFileGenerator:
                 
             context = {
                 "node_description": node.description,
-                "file_spec": file_spec.dict(),
+                "file_spec": file_spec.model_dump(),
                 "dependencies": [
                     os.path.join(self._get_node_path(node.parent_id), dep)
                     for dep in file_spec.dependencies
@@ -264,9 +265,9 @@ class UnifiedFileGenerator:
 async def main():
     from gen_openmanus_config import init_config
     init_config()
-    generator = UnifiedFileGenerator(max_depth=3)
+    generator = UnifiedFileGenerator(max_depth=5)
     task_tree = await generator.build_tree(
-        "写个python程序，输出0到100"
+        "写个贪吃蛇游戏"
     )
     print("\n生成文件列表：")
     for f in task_tree.generated_files:
@@ -275,4 +276,5 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
+
 

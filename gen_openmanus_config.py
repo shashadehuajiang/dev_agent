@@ -37,7 +37,7 @@ def init_config():
     model = "{parsed_config.get('API_MODEL_NAME', '')}"
     base_url = "{parsed_config.get('API_URL', '')}"
     api_key = "{parsed_config.get('ARK_API_KEY', '')}"
-    temperature = 0.2
+    temperature = 0.0
 
     # Optional configuration for specific LLM models
     #[llm.vision]
