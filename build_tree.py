@@ -13,7 +13,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from config import API_URL, ARK_API_KEY, API_MODEL_NAME
 from openmanus.mylib import run_agent
-import subprocess
 
 # 初始化语言模型
 llm = ChatOpenAI(
@@ -86,10 +85,8 @@ class UnifiedCodeGenerator:
         self.node_map = {}
         self.indent_level = 0
         self.generated_files = set()
-        self.max_retries = 1
         self.max_depth = max_depth  # 最大递归深度限制
 
-    # region 工具方法
     def _print_process(self, message: str):
         """打印带缩进和时间戳的处理信息"""
         indent = "  " * self.indent_level
@@ -123,7 +120,6 @@ class UnifiedCodeGenerator:
         if node.status == "completed":
             return
     
-        # 深度限制检查
         if current_depth >= self.max_depth:
             self._print_process(f"⚠️ 达到最大深度限制 {self.max_depth}，停止分解")
             node.status = "completed"
@@ -133,7 +129,6 @@ class UnifiedCodeGenerator:
         self.indent_level += 1
         self._print_process(f"处理节点 [{node.id[:8]}]（深度 {current_depth}）：{node.description}")
         
-        # 分析需求并生成子任务
         response = await self._analyze_requirement(node.description)
         if response.get('type') == 'direct':
             node.class_info = self._parse_class_info(response['class'])
@@ -149,9 +144,8 @@ class UnifiedCodeGenerator:
                     child.api_doc = subtask['class'].get('api_doc')
                 node.children.append(child)
                 self.node_map[child.id] = child
-                await self._process_node(child, current_depth + 1)  # 递归处理子节点
+                await self._process_node(child, current_depth + 1)
     
-        # 生成代码并更新状态
         await self._generate_code(node)
         node.status = "completed"
         self.indent_level -= 1
@@ -214,59 +208,26 @@ class UnifiedCodeGenerator:
         )
 
     async def _generate_code(self, node: TaskNode):
-        """生成并测试代码"""
+        """生成代码"""
         if node.code_path and os.path.exists(node.code_path):
             return
 
-        retry_count = 0
-        previous_error = None
-        current_code = None
+        context = {
+            "requirement": node.description,
+            "class_info": node.class_info.model_dump() if node.class_info else None,
+            "existing_code": None,
+            "save_path": self._get_node_path_info(node)["filepath"]
+        }
 
-        while retry_count < self.max_retries:
-            # 生成或修复代码的上下文
-            context = {
-                "requirement": node.description,
-                "class_info": node.class_info.model_dump() if node.class_info else None,  # 修复点1
-                "error": previous_error,
-                "existing_code": current_code,
-                "save_path": self._get_node_path_info(node)["filepath"]
-            }
-
-            # 执行Agent流程
-            gen_success = await run_agent(json.dumps(context), max_steps = 50)
-            self._print_process("agent gen_success: , {gen_success}")
-            
-            # 测试代码
-            code_path = self._get_node_path_info(node)["filepath"]
-            success, error = self._test_code(code_path)  # 新增测试方法
-
-            if gen_success and success:
-                self._print_process("✅ 代码运行测试通过")
-                node.code_path = code_path
-                break
-            else:
-                retry_count += 1
-                previous_error = error
-                current_code = code_path
-                self._print_process(f"⚠️ 代码测试失败（尝试 {retry_count}/{self.max_retries}）")
-                self._print_process(f"错误信息: {error}")
-
+        gen_success = await run_agent(json.dumps(context), max_steps = 50)
+        self._print_process(f"agent gen_success: {gen_success}")
+        
+        if gen_success:
+            node.code_path = self._get_node_path_info(node)["filepath"]
+            self._print_process("✅ 代码生成完成")
         else:
-            self._print_process("⛔ 达到最大重试次数，代码仍无法运行")
+            self._print_process("⛔ 代码生成失败")
             node.status = "failed"
-            return
-
-        node.status = "completed"
-
-    def _get_code_prompt(self, has_error: bool) -> ChatPromptTemplate:
-        """获取代码生成提示模板"""
-        # 提示模板内容保持不变...
-        pass
-
-    def _build_code_context(self, node: TaskNode) -> str:
-        """构建代码生成上下文信息"""
-        # 上下文构建逻辑保持不变...
-        pass
 
     def _get_node_path_info(self, node: TaskNode) -> Dict:
         """获取节点对应的文件路径信息"""
@@ -292,29 +253,12 @@ class UnifiedCodeGenerator:
             "filepath": filepath
         }
 
-    def _test_code(self, code_path: str) -> tuple:
-        """测试生成的代码"""
-        try:
-            # 使用子进程执行代码测试
-            result = subprocess.run(
-                [sys.executable, code_path],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=120
-            )
-            return True, result.stdout
-        except subprocess.CalledProcessError as e:
-            return False, f"Exit code {e.returncode}\n{e.stderr}"
-        except Exception as e:
-            return False, str(e)
-
 async def main():
     from gen_openmanus_config import init_config
     init_config()
     generator = UnifiedCodeGenerator(max_depth=2)
     task_tree = await generator.build_tree(
-        "写一个flappy bird游戏"
+        "写一个python的程序，输出1到100"
     )
     print(f"根节点代码路径：{task_tree.code_path}")
 
