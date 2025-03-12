@@ -81,12 +81,12 @@ TaskNode.model_rebuild()
 
 class UnifiedCodeGenerator:
     """统一的代码生成器"""
-    def __init__(self, max_depth: int = 3):
+    def __init__(self, max_depth: int = 5):
         self.root = None
         self.node_map = {}
         self.indent_level = 0
         self.generated_files = set()
-        self.max_retries = 3
+        self.max_retries = 1
         self.max_depth = max_depth  # 最大递归深度限制
 
     # region 工具方法
@@ -159,8 +159,7 @@ class UnifiedCodeGenerator:
     async def _analyze_requirement(self, requirement: str) -> Dict:
         """分析用户需求生成实现方案"""
         prompt_template = ChatPromptTemplate.from_template(
-            """分析代码实现需求并返回：如果代码简单，可直接一个文件实现，则返回类信息，否则需拆分子任务进行解耦。
-            子任务必须是python代码任务。
+            """分析需求并返回：如果需求简单，可直接一个文件实现，则返回类信息，否则需拆分子任务进行解耦。
             下面“本任务描述：”之后出现过的所有句子、代码必须包含在其中某一个子任务描述中，不得拆分后遗漏信息。
             子任务的描述必须完备，是完整详细的描述。
             必须严格定义所有函数的输入输出，包括初始化函数。
@@ -234,7 +233,7 @@ class UnifiedCodeGenerator:
             }
 
             # 执行Agent流程
-            gen_success = await run_agent(json.dumps(context))
+            gen_success = await run_agent(json.dumps(context), max_steps = 50)
             self._print_process("agent gen_success: , {gen_success}")
             
             # 测试代码
@@ -302,7 +301,7 @@ class UnifiedCodeGenerator:
                 check=True,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=120
             )
             return True, result.stdout
         except subprocess.CalledProcessError as e:
