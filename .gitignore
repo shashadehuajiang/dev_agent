@@ -2,6 +2,6 @@ log/
 generated/
 test/
 __pycache__/
-config.py
-test.py
-openmanus/config/config.toml
+/config.py
+/test.py
+/openmanus/config/config.toml
