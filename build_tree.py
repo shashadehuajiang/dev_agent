@@ -293,7 +293,7 @@ class UnifiedCodeGenerator:
             "filepath": filepath
         }
 
-    def _test_code(self, code_path: str) -> tuple[bool, str]:
+    def _test_code(self, code_path: str) -> tuple:
         """测试生成的代码"""
         try:
             # 使用子进程执行代码测试
