@@ -13,6 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from config import API_URL, ARK_API_KEY, API_MODEL_NAME
 from openmanus.mylib import run_agent
+from structure import get_directory_structure
 
 # 初始化语言模型
 llm = ChatOpenAI(
@@ -160,13 +161,12 @@ class UnifiedFileGenerator:
         parent_path = self._get_node_path(node.parent_id) if node.parent_id else ""
         
         prompt_template = ChatPromptTemplate.from_template(
-            """作为全栈开发专家，仔细分析需求，并规划文件结构。如果需求在100行代码以下或难度低，不需要拆分subtasks，否则需拆分。遵循以下原则：
-1. 单个节点最多生成3个核心文件
+            """作为全栈专家，仔细分析需求，并规划任务结构。除非任务过于复杂，尽可能不拆分subtask。json描述务必尽量详细，子任务明确输入输出。遵循以下原则：
+1. 单个节点最多生成5个核心文件
 2. 父节点负责框架，子节点处理具体模块
-3. 资源文件集中放在resources目录
-4. 确保文件路径符合当前节点位置：{current_path}
-5. 为每个节点生成简洁的英文文件夹名（使用小写字母和下划线）
-6. 用JSON格式返回，包含：
+3. 确保文件路径符合当前节点位置：{current_path}
+4. 为每个节点生成简洁的英文文件夹名（使用小写字母和下划线）
+5. 用JSON格式返回，包含：
 - type: direct（直接实现）或 split（需要拆分）
 - folder_name: 当前节点的文件夹名称
 - files（当前节点需要生成的文件列表）
@@ -181,7 +181,7 @@ class UnifiedFileGenerator:
             "file_type": "code",
             "file_name": "main.py",
             "purpose": "程序入口",
-            "template": "import pygame\\n..."
+            "template": "from subtask1 import func1\\n..."
         }}
     ],
     "subtasks": [
@@ -217,7 +217,6 @@ class UnifiedFileGenerator:
                 for f in node.file_specs]
 
     async def _generate_files(self, node: TaskNode):
-        """生成节点关联的所有文件"""
         node_dir = self._get_node_path(node.id)
         os.makedirs(node_dir, exist_ok=True)
         
@@ -226,14 +225,16 @@ class UnifiedFileGenerator:
             if os.path.exists(file_path):
                 continue
                 
+            # 获取当前目录结构
+            directory_structure = get_directory_structure(node_dir)
+            print(directory_structure)
+            
             context = {
                 "node_description": node.description,
                 "file_spec": file_spec.model_dump(),
-                "dependencies": [
-                    os.path.join(self._get_node_path(node.parent_id), dep)
-                    for dep in file_spec.dependencies
-                ],
-                "save_path": file_path
+                "save_path": file_path,
+                "directory_structure": directory_structure,  # 当前工程目录结构
+                "最高指示": "1. 写的python程序库必须在main中进行断言测试。 2. 必须利用directory_structure的目录结构进行import函数库！"
             }
             
             gen_success = await run_agent(json.dumps(context), max_steps=50)
@@ -267,7 +268,7 @@ async def main():
     init_config()
     generator = UnifiedFileGenerator(max_depth=5)
     task_tree = await generator.build_tree(
-        "写个贪吃蛇游戏"
+        "写个flappy bird小游戏"
     )
     print("\n生成文件列表：")
     for f in task_tree.generated_files:
