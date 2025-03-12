@@ -6,7 +6,7 @@ import re
 import string
 import json
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Union
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -23,23 +23,18 @@ llm = ChatOpenAI(
 parser = JsonOutputParser()
 
 # 数据模型
-class FunctionInfo(BaseModel):
-    """函数信息模型"""
-    name: str
-    inputs: List[Dict[str, str]] = Field(..., description="输入参数列表，每个参数包含name和type")
-    output: str = Field(..., description="返回值类型")
-    api_doc: Optional[str] = Field(
+class FileSpec(BaseModel):
+    """文件生成规范"""
+    file_type: str = Field(..., description="文件类型（code/config/doc/resource/etc）")
+    file_name: str = Field(..., description="文件名含后缀")
+    purpose: str = Field(..., description="文件用途描述")
+    template: Optional[str] = Field(
         default=None,
-        description="API文档说明（包含调用示例）"
+        description="文件内容模板或关键配置说明"
     )
-
-class ClassInfo(BaseModel):
-    """类信息模型"""
-    name: str = Field(..., description="类名称")
-    functions: List[FunctionInfo] = Field(..., description="包含的方法列表")
-    api_doc: Optional[str] = Field(
-        default=None,
-        description="类级别API文档（包含使用示例）"
+    dependencies: List[str] = Field(
+        default_factory=list,
+        description="依赖的其他文件路径"
     )
 
 class TaskNode(BaseModel):
@@ -49,6 +44,10 @@ class TaskNode(BaseModel):
         description="节点唯一标识"
     )
     description: str = Field(..., description="任务描述")
+    folder_name: Optional[str] = Field(
+        default=None,
+        description="由模型生成的文件夹名称"
+    )
     parent_id: Optional[str] = Field(
         default=None,
         description="父节点ID（根节点为空）"
@@ -57,13 +56,13 @@ class TaskNode(BaseModel):
         default_factory=list,
         description="子任务节点列表"
     )
-    class_info: Optional[ClassInfo] = Field(
-        default=None,
-        description="关联的类信息"
+    file_specs: List[FileSpec] = Field(
+        default_factory=list,
+        description="需要生成的文件规范"
     )
-    code_path: Optional[str] = Field(
-        default=None,
-        description="生成代码文件路径"
+    generated_files: List[str] = Field(
+        default_factory=list,
+        description="已生成的文件路径"
     )
     api_doc: Optional[str] = Field(
         default=None,
@@ -71,20 +70,19 @@ class TaskNode(BaseModel):
     )
     status: str = Field(
         default="pending",
-        description="任务状态: pending/processing/completed"
+        description="任务状态: pending/processing/completed/failed"
     )
 
 # 解决前向引用问题
 TaskNode.model_rebuild()
 
 
-class UnifiedCodeGenerator:
-    """统一的代码生成器"""
+class UnifiedFileGenerator:
+    """统一文件生成器"""
     def __init__(self, max_depth: int = 5):
         self.root = None
         self.node_map = {}
         self.indent_level = 0
-        self.generated_files = set()
         self.max_depth = max_depth  # 最大递归深度限制
 
     def _print_process(self, message: str):
@@ -129,138 +127,150 @@ class UnifiedCodeGenerator:
         self.indent_level += 1
         self._print_process(f"处理节点 [{node.id[:8]}]（深度 {current_depth}）：{node.description}")
         
-        response = await self._analyze_requirement(node.description)
+        response = await self._analyze_requirement(node)
+        node.folder_name = response.get('folder_name', f"node_{node.id[:6]}")  # 设置文件夹名称
+        
         if response.get('type') == 'direct':
-            node.class_info = self._parse_class_info(response['class'])
-            node.api_doc = response['class'].get('api_doc')
+            node.file_specs = [FileSpec(**f) for f in response['files']]
         else:
+            # 先处理子任务
             for subtask in response.get('subtasks', []):
                 child = TaskNode(
                     description=subtask['description'],
+                    folder_name=subtask.get('folder_name'),
                     parent_id=node.id,
                 )
-                if 'class' in subtask:
-                    child.class_info = self._parse_class_info(subtask['class'])
-                    child.api_doc = subtask['class'].get('api_doc')
+                if 'files' in subtask:
+                    child.file_specs = [FileSpec(**f) for f in subtask['files']]
                 node.children.append(child)
                 self.node_map[child.id] = child
                 await self._process_node(child, current_depth + 1)
+            
+            # 处理当前节点文件（在子节点之后处理以实现依赖解析）
+            if 'files' in response:
+                node.file_specs = [FileSpec(**f) for f in response['files']]
     
-        await self._generate_code(node)
-        node.status = "completed"
+        await self._generate_files(node)
+        node.status = "completed" if all(f in node.generated_files for f in self._get_expected_files(node)) else "failed"
         self.indent_level -= 1
 
-    async def _analyze_requirement(self, requirement: str) -> Dict:
+    async def _analyze_requirement(self, node: TaskNode) -> Dict:
         """分析用户需求生成实现方案"""
+        parent_path = self._get_node_path(node.parent_id) if node.parent_id else ""
+        
         prompt_template = ChatPromptTemplate.from_template(
-            """分析需求并返回：如果需求简单，可直接一个文件实现，则返回类信息，否则需拆分子任务进行解耦。
-            下面“本任务描述：”之后出现过的所有句子、代码必须包含在其中某一个子任务描述中，不得拆分后遗漏信息。
-            子任务的描述必须完备，是完整详细的描述。
-            必须严格定义所有函数的输入输出，包括初始化函数。
-            返回格式（JSON）：
-            {{
-                "type": "direct|split",
-                "class": {{
-                    "name": "类名（直接实现时）",
-                    "api_doc": "功能描述",
-                    "functions": [
-                        {{
-                            "name":"方法名",
-                            "input":"参数:类型,...",
-                            "output":"返回类型",
-                            "api_doc":"方法说明（含调用示例）"
-                        }}
-                    ]
-                }},
-                "subtasks": [
-                    {{
-                        "description": "子任务描述",
-                        "class": {{...}}  // 可选
-                    }}
-                ]
-            }}
-            本任务描述：{requirement}"""
+            """作为全栈开发专家，分析需求并规划文件结构。遵循以下原则：
+1. 单个节点最多生成5个核心文件
+2. 父节点负责框架，子节点处理具体模块
+3. 资源文件集中放在resources目录
+4. 确保文件路径符合当前节点位置：{current_path}
+5. 为每个节点生成简洁的英文文件夹名（使用小写字母和下划线）
+6. 用JSON格式返回，包含：
+- type: direct（直接实现）或 split（需要拆分）
+- folder_name: 当前节点的文件夹名称
+- files（当前节点需要生成的文件列表）
+- subtasks（需要拆分的子任务列表）
+
+返回示例：
+{{
+    "type": "split",
+    "folder_name": "flappy_bird_main",
+    "files": [
+        {{
+            "file_type": "code",
+            "file_name": "main.py",
+            "purpose": "程序入口",
+            "template": "import pygame\\n..."
+        }}
+    ],
+    "subtasks": [
+        {{
+            "description": "实现游戏角色系统",
+            "folder_name": "character_system",
+            "files": [
+                {{
+                    "file_type": "code", 
+                    "file_name": "character.py",
+                    "purpose": "角色类定义"
+                }}
+            ]
+        }}
+    ]
+}}
+
+当前节点任务：{requirement}"""
         )
-        messages = prompt_template.format_messages(requirement=requirement)
+        
+        messages = prompt_template.format_messages(
+            requirement=node.description,
+            current_path=self._get_node_path(node.id)
+        )
+        
         response = await llm.ainvoke(messages)
         self._log_api_call(messages, response.content)
         return parser.invoke(response)
 
-    def _parse_class_info(self, data: Dict) -> ClassInfo:
-        """解析类信息"""
-        functions = []
-        for func in data.get('functions', []):
-            inputs = []
-            for param in func.get('input', '').split(','):
-                if param.strip() and ':' in param:
-                    name, type_ = param.split(':', 1)
-                    inputs.append({"name": name.strip(), "type": type_.strip()})
-            functions.append(FunctionInfo(
-                name=func['name'],
-                inputs=inputs,
-                output=func.get('output', ''),
-                api_doc=func.get('api_doc')
-            ))
-        return ClassInfo(
-            name=data['name'],
-            functions=functions,
-            api_doc=data.get('api_doc')
-        )
+    def _get_expected_files(self, node: TaskNode) -> List[str]:
+        """获取节点预期生成的文件路径"""
+        return [os.path.join(self._get_node_path(node.id), f.file_name) 
+                for f in node.file_specs]
 
-    async def _generate_code(self, node: TaskNode):
-        """生成代码"""
-        if node.code_path and os.path.exists(node.code_path):
-            return
-
-        context = {
-            "requirement": node.description,
-            "class_info": node.class_info.model_dump() if node.class_info else None,
-            "existing_code": None,
-            "save_path": self._get_node_path_info(node)["filepath"]
-        }
-
-        gen_success = await run_agent(json.dumps(context), max_steps = 50)
-        self._print_process(f"agent gen_success: {gen_success}")
+    async def _generate_files(self, node: TaskNode):
+        """生成节点关联的所有文件"""
+        node_dir = self._get_node_path(node.id)
+        os.makedirs(node_dir, exist_ok=True)
         
-        if gen_success:
-            node.code_path = self._get_node_path_info(node)["filepath"]
-            self._print_process("✅ 代码生成完成")
-        else:
-            self._print_process("⛔ 代码生成失败")
-            node.status = "failed"
-
-    def _get_node_path_info(self, node: TaskNode) -> Dict:
-        """获取节点对应的文件路径信息"""
-        path_parts = []
-        current_node = node
-        while current_node:
-            if current_node.class_info:
-                folder_name = re.sub(r'([A-Z])', r'_\1', current_node.class_info.name).lower().strip('_')
+        for file_spec in node.file_specs:
+            file_path = os.path.join(node_dir, file_spec.file_name)
+            if os.path.exists(file_path):
+                continue
+                
+            context = {
+                "node_description": node.description,
+                "file_spec": file_spec.dict(),
+                "dependencies": [
+                    os.path.join(self._get_node_path(node.parent_id), dep)
+                    for dep in file_spec.dependencies
+                ],
+                "save_path": file_path
+            }
+            
+            gen_success = await run_agent(json.dumps(context), max_steps=50)
+            if gen_success:
+                node.generated_files.append(file_path)
+                self._print_process(f"📄 生成文件：{file_path}")
             else:
-                valid_chars = f"-_{string.ascii_letters}{string.digits}"
-                folder_name = ''.join(c for c in current_node.description[:20] if c in valid_chars) or f"node_{current_node.id[:6]}"
-            path_parts.append(folder_name)
-            current_node = self.node_map.get(current_node.parent_id) if current_node.parent_id else None
+                self._print_process(f"❌ 文件生成失败：{file_spec.file_name}")
 
+    def _get_node_path(self, node_id: str) -> str:
+        """获取节点对应的文件路径"""
+        path_parts = []
+        current_node = self.node_map.get(node_id)
+        
+        while current_node:
+            if current_node.folder_name:
+                # 清理非法字符并生成有效文件夹名称
+                valid_name = re.sub(r'[^a-z0-9_-]', '', current_node.folder_name.lower())
+                if not valid_name:
+                    valid_name = f"node_{current_node.id[:6]}"
+                path_parts.append(valid_name)
+            else:
+                path_parts.append(f"node_{current_node.id[:6]}")
+            current_node = self.node_map.get(current_node.parent_id) if current_node.parent_id else None
+        
         path_parts.reverse()
-        full_path = os.path.join("generated", *path_parts)
-        filename = f"{path_parts[-1]}.py" if path_parts else "main.py"
-        filepath = os.path.join(full_path, filename)
-        return {
-            "path_parts": path_parts,
-            "full_path": full_path,
-            "filename": filename,
-            "filepath": filepath
-        }
+        return os.path.join("generated", *path_parts)
 
 async def main():
     from gen_openmanus_config import init_config
     init_config()
-    generator = UnifiedCodeGenerator(max_depth=2)
+    generator = UnifiedFileGenerator(max_depth=3)
     task_tree = await generator.build_tree(
-        "写一个python的程序，输出1到100"
+        "写个python程序，输出0到100"
     )
-    print(f"根节点代码路径：{task_tree.code_path}")
+    print("\n生成文件列表：")
+    for f in task_tree.generated_files:
+        print(f" - {f}")
 
 if __name__ == "__main__":
     import asyncio
