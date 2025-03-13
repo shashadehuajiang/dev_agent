@@ -3,7 +3,7 @@ from gen_openmanus_config import init_config
 
 async def main():
     init_config()
-    generator = UnifiedFileGenerator(max_depth=5)
+    generator = UnifiedFileGenerator(max_depth=2)
     task_tree = await generator.build_tree(
         "写篇计算机博士的论文，题目是隐蔽信道，要求10000字"
     )
