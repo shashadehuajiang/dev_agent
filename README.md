@@ -38,6 +38,7 @@ API_MODEL_NAME ="deepseek-r1-250120"
 ```
 请将 `your_api_url`、`your_api_key` 和 `your_model_name` 替换为你实际使用的 API 地址、API 密钥和模型名称。
 
+[火山引擎，邀请码9GS1RLBP](https://volcengine.com/L/hwTmWVoFlww/)
 [火山引擎API获取方式（支持deepseek系列）](https://zhuanlan.zhihu.com/p/23798747150)
 
 ## 运行代码
