@@ -12,6 +12,10 @@ from langchain_core.output_parsers import JsonOutputParser
 from config import API_URL, ARK_API_KEY, API_MODEL_NAME
 from openmanus.mylib import run_agent
 
+# 记录用户prompt
+global user_prompt
+user_prompt = None
+
 # 初始化语言模型
 llm = ChatOpenAI(
     openai_api_base=API_URL,
@@ -81,6 +85,7 @@ class UnifiedFileGenerator:
         self.max_depth = max_depth
         self.generated_files = set()
 
+
     def _print_process(self, message: str):
         """打印带缩进和时间戳的处理信息"""
         indent = "  " * self.indent_level
@@ -136,6 +141,10 @@ class UnifiedFileGenerator:
         return functions
 
     async def build_tree(self, requirement: str) -> TaskNode:
+        global user_prompt
+        if user_prompt is None:
+            user_prompt = requirement
+
         """构建任务树"""
         self._print_process(f"构建任务树：'{requirement}'")
         self.root = TaskNode(description=requirement)
@@ -262,7 +271,10 @@ class UnifiedFileGenerator:
         # 收集可用代码模块信息
         available_modules = await self._collect_module_info(node)
         
+        global user_prompt
         context = {
+            "最终任务": user_prompt,
+            "当前任务": node.description,
             "current_file": {
                 "purpose": node.file_spec.purpose,
                 "file_type": node.file_spec.file_type,
@@ -358,9 +370,9 @@ async def main():
     from gen_openmanus_config import init_config
     init_config()
     generator = UnifiedFileGenerator(max_depth=5)
+    prompt = "写一个坦克大战小游戏"
     task_tree = await generator.build_tree(
-        #"写一个贪吃蛇小游戏"
-        "写一个坦克大战小游戏"
+        prompt
     )
     print("\n生成文件列表：")
     if task_tree.generated_file:
@@ -369,4 +381,5 @@ async def main():
 if __name__ == "__main__":
     import asyncio
     asyncio.run(main())
+
 
